@@ -305,7 +305,7 @@ int KvGetInt(char *key, int *result) {
     char *value = (char *) malloc(sizeof(int));
     KvGet(key, &value);
     if (value == NULL) {
-        return 1;
+        return -1;
     }
     *result = *(int *)value;
     free(value);

@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(src)
 
 set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_FLAGS "-std=c++11")
 
-include_directories(.)
 include_directories(backend/catalog)
 include_directories(backend/parser)
 include_directories(backend/storage/lmgr)
@@ -929,7 +927,6 @@ add_executable(src
         backend/utils/fmgroids.h
         backend/utils/fmgrprotos.h
         backend/utils/fmgrtab.c
-        backend/utils/probes.h
         bin/initdb/findtimezone.c
         bin/initdb/initdb.c
         bin/pg_archivecleanup/pg_archivecleanup.c
@@ -2138,7 +2135,6 @@ add_executable(src
         port/open.c
         port/path.c
         port/pg_bitutils.c
-        port/pg_config_paths.h
         port/pg_crc32c_armv8.c
         port/pg_crc32c_armv8_choose.c
         port/pg_crc32c_sb8.c

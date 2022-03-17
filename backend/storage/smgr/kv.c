@@ -82,6 +82,38 @@ kvinit(void)
                                   ALLOCSET_DEFAULT_SIZES);
 }
 
+
+BlockNumber
+kvnblocks(SMgrRelation reln, ForkNumber forknum)
+{
+//    ereport(NOTICE,
+//            (errcode(ERRCODE_INTERNAL_ERROR),
+//                    errmsg("kvnblocks start\n")));
+//    printf("[kvnblocks] dbNum = %d, relNum = %d, forkNum = %d\n", reln->smgr_rnode.node.dbNode, reln->smgr_rnode.node.relNode, forknum);
+
+    char *path;
+    int totalPageNum = 0;
+    char kvNumKey[MAXPGPATH];
+    int err = 0;
+
+    path = relpath(reln->smgr_rnode, forknum);
+    snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
+    pfree(path);
+
+    err = KvGetInt(kvNumKey, &totalPageNum);
+    if (err == -1) { // err==-1 means $kvNumKey doesn't exist in kv_store
+        return -1;
+    }
+//    if (err != 0) {
+//        ereport(ERROR,
+//                (errcode(ERRCODE_KV_COMMAND_ERROR),
+//                        errmsg("[kvnblocks] KvGetInt failed, db=%d, rel=%d, fork=%d", reln->smgr_rnode.node.dbNode, reln->smgr_rnode.node.relNode, forknum)));
+//        return 0;
+//    }
+
+    return totalPageNum;
+}
+
 void
 kvcopydb(char *srcPath, char*dstPath) {
     KvPrefixCopyDir(srcPath, dstPath, KV_FILE_PAGE_NUM_PREFIX);
@@ -107,29 +139,40 @@ kvexists(SMgrRelation reln, ForkNumber forkNum)
      * since we opened it.
      */
     kvclose(reln, forkNum);
-
-    char *filename = relpath(reln->smgr_rnode, forkNum);
-    char kvKey[MAXPGPATH];
-    snprintf(kvKey, sizeof(kvKey), KV_FILE_PAGE_NUM, filename);
-    pfree(filename);
-
-    int pageNum = 0;
-    int err = KvGetInt(kvKey, &pageNum);
-
-    // if that file has no page stored in KV
-    // err==1 means key doesn't exist
-    if (err == 1) {
+    int pageNum = kvnblocks(reln, forkNum);
+    if(pageNum == -1) {
         return false;
-    }
-
-    // maybe truncate
-    if (pageNum == 0) {
+    }  else {
+        reln->md_num_open_segs[forkNum] = pageNum;
         return true;
     }
 
-    reln->md_num_open_segs[forkNum] = pageNum;
-
-    return true;
+//
+//
+//    char *filename = relpath(reln->smgr_rnode, forkNum);
+//    char kvKey[MAXPGPATH];
+//    snprintf(kvKey, sizeof(kvKey), KV_FILE_PAGE_NUM, filename);
+//    pfree(filename);
+//
+//    int pageNum = 0;
+//    int err = KvGetInt(kvKey, &pageNum);
+//
+//    // if that file has no page stored in KV
+//    // err==1 means key doesn't exist
+//    if (err == 1) {
+//        return false;
+//    }
+//
+//
+//
+//    // maybe truncate
+//    if (pageNum == 0) {
+//        return true;
+//    }
+//
+//    reln->md_num_open_segs[forkNum] = pageNum;
+//
+//    return true;
 }
 
 void
@@ -214,17 +257,34 @@ kvunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
     if (!RelFileNodeBackendIsTemp(rnode))
         kvregister_forget_request(rnode, forkNum, 0 /* first seg */ );
 
+
     // Delete all the page, but leave pageNumKey to be processed later
     char kvNumKey[MAXPGPATH];
     snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
 
-    int pageNum = 0;
-    int err = KvGetInt(kvNumKey, &pageNum);
-    if (err != 0) {
+
+
+    SMgrRelation reln;
+    reln = malloc(sizeof(SMgrRelationData));
+    reln->smgr_rnode = rnode;
+    int pageNum = kvnblocks(reln, forkNum);
+    if (pageNum < 0) {
         ereport(WARNING,
                 (errcode_for_file_access(),
-                        errmsg("get key failed", kvNumKey)));
+                        errmsg("kvunlinkfork get key %s failed", kvNumKey)));
     }
+    free(reln);
+
+
+
+//
+//    int pageNum = 0;
+//    int err = KvGetInt(kvNumKey, &pageNum);
+//    if (err != 0) {
+//        ereport(WARNING,
+//                (errcode_for_file_access(),
+//                        errmsg("get key failed", kvNumKey)));
+//    }
 
     char kvPageKey[MAXPGPATH];
     for (int pageno = 0; pageno < pageNum; pageno++) {
@@ -241,6 +301,7 @@ kvunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
     {
         KvPutInt(kvNumKey, 0);
         /* Register request to unlink first segment later */
+        //! Does it works??
         kvregister_unlink_segment(rnode, forkNum, 0 /* first seg */ );
     }
 
@@ -257,16 +318,23 @@ kvextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
     path = relpath(reln->smgr_rnode, forknum);
 
     // first get how many pages are in this fork, currently.
-    int err = 0;
+
     int currPageNum = 0;
+//    int err = 0;
     char kvNumKey[MAXPGPATH];
     snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
-    err = KvGetInt(kvNumKey, &currPageNum);
-    if (err != 0) {
+//    err = KvGetInt(kvNumKey, &currPageNum);
+//    if (err != 0) {
+//        ereport(ERROR,
+//                (errcode(ERRCODE_KV_COMMAND_ERROR),
+//                        errmsg("[kvextend] KvGetInt failed")));
+//        return;
+//    }
+    currPageNum = kvnblocks(reln, forknum);
+    if (currPageNum < 0) {
         ereport(ERROR,
                 (errcode(ERRCODE_KV_COMMAND_ERROR),
-                        errmsg("[kvextend] KvGetInt failed")));
-        return;
+                        errmsg("[kvextend] kvnblocks get minus result")));
     }
 
     // No need to extend
@@ -348,9 +416,9 @@ kvregister_unlink_segment(RelFileNodeBackend rnode, ForkNumber forknum,
 bool
 kvprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum)
 {
-    ereport(NOTICE,
-            (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("kvprefetch start\n")));
+//    ereport(NOTICE,
+//            (errcode(ERRCODE_INTERNAL_ERROR),
+//                    errmsg("kvprefetch start\n")));
 #ifdef USE_PREFETCH
 //    off_t		seekpos;
 //    MdfdVec    *v;
@@ -392,13 +460,20 @@ kvread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
                                         reln->smgr_rnode.backend);
 
     path = relpath(reln->smgr_rnode, forknum);
-    snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
-
-    err = KvGetInt(kvNumKey, &totalPageNum);
-    if (err != 0) {
+//    snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
+//
+//    err = KvGetInt(kvNumKey, &totalPageNum);
+//    if (err != 0) {
+//        ereport(ERROR,
+//                (errcode(ERRCODE_KV_COMMAND_ERROR),
+//                        errmsg("[kvread] KvGetInt failed")));
+//        return;
+//    }
+    totalPageNum = kvnblocks(reln, forknum);
+    if (totalPageNum < 0) {
         ereport(ERROR,
                 (errcode(ERRCODE_KV_COMMAND_ERROR),
-                        errmsg("[kvread] KvGetInt failed")));
+                        errmsg("[kvread] kvnblocks failed")));
         return;
     }
 
@@ -451,15 +526,24 @@ kvwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
                                          reln->smgr_rnode.backend);
 
     path = relpath(reln->smgr_rnode, forknum);
-    snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
-
-    err = KvGetInt(kvNumKey, &totalPageNum);
-    if (err != 0) {
+    totalPageNum = kvnblocks(reln, forknum);
+    if (totalPageNum < 0) {
         ereport(ERROR,
                 (errcode(ERRCODE_KV_COMMAND_ERROR),
-                        errmsg("[kvwrite] KvGetInt failed")));
+                        errmsg("[kvwrite] kvnblocks failed")));
         return;
     }
+//
+//
+//    snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
+//
+//    err = KvGetInt(kvNumKey, &totalPageNum);
+//    if (err != 0) {
+//        ereport(ERROR,
+//                (errcode(ERRCODE_KV_COMMAND_ERROR),
+//                        errmsg("[kvwrite] KvGetInt failed")));
+//        return;
+//    }
 
     if (totalPageNum < blocknum+1) {
         // if inRecovery == true, then extend page
@@ -501,34 +585,6 @@ kvwriteback(SMgrRelation reln, ForkNumber forknum,
     // let kvstore do sync by itself
 }
 
-BlockNumber
-kvnblocks(SMgrRelation reln, ForkNumber forknum)
-{
-//    ereport(NOTICE,
-//            (errcode(ERRCODE_INTERNAL_ERROR),
-//                    errmsg("kvnblocks start\n")));
-//    printf("[kvnblocks] dbNum = %d, relNum = %d, forkNum = %d\n", reln->smgr_rnode.node.dbNode, reln->smgr_rnode.node.relNode, forknum);
-
-    char *path;
-    int totalPageNum = 0;
-    char kvNumKey[MAXPGPATH];
-    int err = 0;
-
-    path = relpath(reln->smgr_rnode, forknum);
-    snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
-    pfree(path);
-
-    err = KvGetInt(kvNumKey, &totalPageNum);
-    if (err != 0) {
-        ereport(ERROR,
-                (errcode(ERRCODE_KV_COMMAND_ERROR),
-                        errmsg("[kvnblocks] KvGetInt failed, db=%d, rel=%d, fork=%d", reln->smgr_rnode.node.dbNode, reln->smgr_rnode.node.relNode, forknum)));
-        return 0;
-    }
-
-    return totalPageNum;
-}
-
 /*
  *	kvtruncate() -- Truncate relation to specified number of blocks.
  */
@@ -545,13 +601,21 @@ kvtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
     path = relpath(reln->smgr_rnode, forknum);
     snprintf(kvNumKey, sizeof(kvNumKey), KV_FILE_PAGE_NUM, path);
 
-    err = KvGetInt(kvNumKey, &totalPageNum);
-    if (err != 0) {
+    totalPageNum = kvnblocks(reln, forknum);
+    if (totalPageNum < 0) {
         ereport(ERROR,
                 (errcode(ERRCODE_KV_COMMAND_ERROR),
-                        errmsg("[kvtruncate] KvGetInt failed")));
+                        errmsg("[kvtruncate] kvnblocks failed")));
         return;
     }
+//
+//    err = KvGetInt(kvNumKey, &totalPageNum);
+//    if (err != 0) {
+//        ereport(ERROR,
+//                (errcode(ERRCODE_KV_COMMAND_ERROR),
+//                        errmsg("[kvtruncate] KvGetInt failed")));
+//        return;
+//    }
 
     if (nblocks > totalPageNum) {
         /* Bogus request ... but no complaint if InRecovery */
@@ -649,11 +713,25 @@ kvunlinkfiletag(const FileTag *ftag, char *path)
      *      If there are still some pages, delete it
      * Finally, delete page number key
      */
-    int resultPageNum = -1;
-    if (KvGetInt(kvNumKey, &resultPageNum) != 0) {
+//    int resultPageNum = -1;
+//    if (KvGetInt(kvNumKey, &resultPageNum) != 0) {
+//        ereport(ERROR,
+//                (errcode(ERRCODE_KV_COMMAND_ERROR),
+//                        errmsg("[kvunlinkfiletag] KvGetInt failed")));
+//        return -1;
+//    }
+
+    SMgrRelation reln = malloc(sizeof(SMgrRelationData));
+    reln->smgr_rnode.node = ftag->rnode;
+
+    int resultPageNum = 0;
+    resultPageNum = kvnblocks(reln, MAIN_FORKNUM);
+    free(reln);
+
+    if(resultPageNum < 0) {
         ereport(ERROR,
                 (errcode(ERRCODE_KV_COMMAND_ERROR),
-                        errmsg("[kvunlinkfiletag] KvGetInt failed")));
+                        errmsg("[kvunlinkfiletag] kvnblocks failed")));
         return -1;
     }
 

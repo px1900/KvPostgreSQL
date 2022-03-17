@@ -890,9 +890,9 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	Assert(!(pg_atomic_read_u32(&bufHdr->state) & BM_VALID));	/* spinlock not needed */
 
 	bufBlock = isLocalBuf ? LocalBufHdrGetBlock(bufHdr) : BufHdrGetBlock(bufHdr);
-    ereport(NOTICE,
-            (errcode(ERRCODE_INTERNAL_ERROR),
-                    errmsg("[ReadBuffer_common]  isExtend =%d\n", isExtend)));
+//    ereport(NOTICE,
+//            (errcode(ERRCODE_INTERNAL_ERROR),
+//                    errmsg("[ReadBuffer_common]  isExtend =%d\n", isExtend)));
 	if (isExtend)
 	{
 		/* new buffers are zero-filled */
