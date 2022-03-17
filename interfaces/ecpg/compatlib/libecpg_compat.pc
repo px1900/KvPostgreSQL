@@ -1,9 +1,0 @@
-Name: libecpg_compat
-Description: PostgreSQL libecpg_compat library
-Url: https://www.postgresql.org/
-Version: 13.0
-Requires: 
-Requires.private: libecpg libpgtypes
-Cflags: -I/home/pang65/TestRocksdb/built_project/include
-Libs: -L/home/pang65/TestRocksdb/built_project/lib -lecpg_compat
-Libs.private: -L/usr/local/lib -lm
